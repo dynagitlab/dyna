@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 pragma solidity ^0.8.0;
-
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -80,7 +80,7 @@ library OrderData {
 
 
 
-contract OrderBook is Ownable, Handler{
+contract OrderBook is Ownable, Handler, ReentrancyGuard{
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
     using Address for address payable;
@@ -225,7 +225,7 @@ contract OrderBook is Ownable, Handler{
     function createIncreaseOrder(
         OrderData.IncreaseOrderIntf calldata orderIt,
         address[] memory _path,
-        bytes[] memory _updaterSignedMsg) external payable {
+        bytes[] memory _updaterSignedMsg) external nonReentrant payable {
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_updaterSignedMsg);
 
         // always need this call because of mandatory executionFee user has to transfer in ETH
@@ -275,14 +275,14 @@ contract OrderBook is Ownable, Handler{
 
         emit CreateIncreaseOrder(order);
     }
-    function updateIncreaseOrderByKey(bytes32 _key, uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) public {
+    function updateIncreaseOrderByKey(bytes32 _key, uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) public nonReentrant {
         _updateIncreaseOrder(_key, _sizeDelta, _triggerPrice, _triggerAboveThreshold);
     }
     // function updateIncreaseOrder(uint256 _orderIndex, uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) public {
     //     bytes32 _key = increaseOrderKeys[msg.sender][_orderIndex];
     //     _updateIncreaseOrder(_key, _sizeDelta, _triggerPrice, _triggerAboveThreshold);
     // }
-    function _updateIncreaseOrder(bytes32 _key, uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) public {
+    function _updateIncreaseOrder(bytes32 _key, uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) private  {
         require(isIncreaseOrderKeyAlive(_key), "no key");
         OrderData.IncreaseOrder storage order = increaseOrders[_key];
         require(msg.sender == order.account, "Forbiden");
@@ -296,7 +296,7 @@ contract OrderBook is Ownable, Handler{
     //     bytes32 _key = increaseOrderKeys[msg.sender][_orderIndex];
     //     _cancelIncreaseOrder(_key);
     // }
-    function cancelIncreaseOrderByKey(bytes32 _key) public {
+    function cancelIncreaseOrderByKey(bytes32 _key) public nonReentrant {
         _cancelIncreaseOrder(_key);
     }
     function _cancelIncreaseOrder(bytes32 _key) internal {
@@ -304,18 +304,19 @@ contract OrderBook is Ownable, Handler{
         OrderData.IncreaseOrder memory order = increaseOrders[_key];
         address _account = order.account;
         require(_account == msg.sender || isHandler(msg.sender), "forbiden");
+
+        increaseOrderKeysAlive[address(0)].remove(_key);
+        delete increaseOrders[_key];
+
         if(_account != address(0)){
             if (order.purchaseToken == weth) {
                 _transferOutETH(order.executionFee.add(order.purchaseTokenAmount), payable(msg.sender)); 
             } else {
                 IERC20(order.purchaseToken).safeTransfer(msg.sender, order.purchaseTokenAmount);
-                _transferOutETH(order.executionFee,payable(msg.sender)); 
+                _transferOutETH(order.executionFee, payable(msg.sender)); 
             }
             increaseOrderKeysAlive[_account].remove(_key);
         }
-        increaseOrderKeysAlive[address(0)].remove(_key);
-        // delete increaseOrderKeys[_account][order.index];
-        delete increaseOrders[_key];
         emit CancelIncreaseOrder(order);
     }
 
@@ -330,7 +331,7 @@ contract OrderBook is Ownable, Handler{
         bool _isLong,
         uint256 _triggerPrice,
         bool _triggerAboveThreshold,
-        bytes[] memory _updaterSignedMsg) external payable{
+        bytes[] memory _updaterSignedMsg) external nonReentrant payable{
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_updaterSignedMsg);
         _transferInETH();
         require(msg.value == minExecutionFee, "iFee");
@@ -388,7 +389,7 @@ contract OrderBook is Ownable, Handler{
     //     bytes32 _key = decreaseOrderKeys[msg.sender][_orderIndex];
     //     _cancelDecreaseOrder(_key);
     // }
-    function cancelDecreaseOrderByKey(bytes32 _key) public {
+    function cancelDecreaseOrderByKey(bytes32 _key) public nonReentrant {
         _cancelDecreaseOrder(_key);
     }
     function _cancelDecreaseOrder(bytes32 _key) internal {
@@ -396,23 +397,22 @@ contract OrderBook is Ownable, Handler{
         OrderData.DecreaseOrder memory order = decreaseOrders[_key];
         address _account = order.account;
         require(_account == msg.sender || isHandler(msg.sender), "forbiden");
+        decreaseOrderKeysAlive[address(0)].remove(_key);
+        delete decreaseOrders[_key];
         if(_account != address(0)){
             _transferOutETH(order.executionFee, payable(msg.sender)); 
             decreaseOrderKeysAlive[_account].remove(_key);
         }
-        decreaseOrderKeysAlive[address(0)].remove(_key);
-        // delete decreaseOrderKeys[msg.sender][order.index];
-        delete decreaseOrders[_key];
         emit CancelDecreaseOrder(order);
     }
 
-    function updateDecreaseOrderByKey(bytes32 _key, uint256 _collateralDelta,  uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) public {
+    function updateDecreaseOrderByKey(bytes32 _key, uint256 _collateralDelta,  uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) public nonReentrant{
         _updateDecreaseOrder(_key, _collateralDelta, _sizeDelta, _triggerPrice, _triggerAboveThreshold);
     }
     // function updateDecreaseOrder(uint256 _orderIndex, uint256 _collateralDelta, uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) public {
     //     _updateDecreaseOrder(decreaseOrderKeys[msg.sender][_orderIndex], _collateralDelta, _sizeDelta, _triggerPrice, _triggerAboveThreshold);
     // }
-    function _updateDecreaseOrder(bytes32 _key, uint256 _collateralDelta, uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) public {
+    function _updateDecreaseOrder(bytes32 _key, uint256 _collateralDelta, uint256 _sizeDelta, uint256 _triggerPrice, bool _triggerAboveThreshold) private {
         require(isDecreaseOrderKeyAlive(_key), "no order");
         OrderData.DecreaseOrder storage order = decreaseOrders[_key];
         require(order.account == msg.sender, "forbiden");
@@ -436,7 +436,7 @@ contract OrderBook is Ownable, Handler{
         uint256 _executionFee,
         bool _shouldWrap,
         bool _shouldUnwrap,
-        bytes[] memory _updaterSignedMsg) external payable{
+        bytes[] memory _updaterSignedMsg) external nonReentrant payable{
         IVaultPriceFeed(priceFeed).updatePriceFeeds(_updaterSignedMsg);
         require(_path.length == 2 || _path.length == 3, "IPL");
         require(_path[0] != _path[_path.length - 1], "IP");
@@ -494,11 +494,13 @@ contract OrderBook is Ownable, Handler{
         emit CreateSwapOrder(order);
     }
 
-    function cancelSwapOrderByKey(bytes32 _key) public {
+    function cancelSwapOrderByKey(bytes32 _key) public nonReentrant{
         require(isSwapOrderKeyAlive(_key), "no order");
         OrderData.SwapOrder memory order = swapOrders[_key];
         address _account = order.account;
         require(_account == msg.sender || isHandler(msg.sender), "forbiden");
+        swapOrderKeysAlive[address(0)].remove(_key);
+        delete swapOrders[_key];
         if(_account != address(0)){
             if (order.path[0] == weth) {
                 _transferOutETH(order.executionFee.add(order.amountIn), payable(msg.sender)); //BLKMDF
@@ -508,13 +510,11 @@ contract OrderBook is Ownable, Handler{
             }
             swapOrderKeysAlive[_account].remove(_key);
         }
-        swapOrderKeysAlive[address(0)].remove(_key);
-        // delete swapOrderKeys[_account][order.index];
-        delete swapOrders[_key];
+
         emit CancelSwapOrder(order);
     }
 
-    function updateSwapOrderByKey(bytes32 _key, uint256 _minOut, uint256 _triggerRatio, bool _triggerAboveThreshold) external {
+    function updateSwapOrderByKey(bytes32 _key, uint256 _minOut, uint256 _triggerRatio, bool _triggerAboveThreshold) external nonReentrant{
         OrderData.SwapOrder memory order = swapOrders[_key];
         require(order.account != address(0), "no-order");
         address _account = order.account;
@@ -532,7 +532,7 @@ contract OrderBook is Ownable, Handler{
         bytes32[] memory _swapOrderKeys,
         bytes32[] memory _increaseOrderKeys,
         bytes32[] memory _decreaseOrderKeys
-    ) external {
+    ) external nonReentrant{
         for (uint256 i = 0; i < _swapOrderKeys.length; i++) {
             cancelSwapOrderByKey(_swapOrderKeys[i]);
         }
@@ -547,7 +547,7 @@ contract OrderBook is Ownable, Handler{
 
 
 
-    function executeIncreaseOrder(bytes32 _key, address payable _feeReceiver) external onlyHandler {
+    function executeIncreaseOrder(bytes32 _key, address payable _feeReceiver) external onlyHandler nonReentrant{
         OrderData.IncreaseOrder memory order = increaseOrders[_key];
         require(isIncreaseOrderKeyAlive(_key) && order.account != address(0), "no order");
 
@@ -569,21 +569,22 @@ contract OrderBook is Ownable, Handler{
             uint256 amountOut = _swap(order.vault, path, 0, address(this));
             IERC20(order.collateralToken).safeTransfer(order.vault, amountOut);
         }
+        increaseOrderKeysAlive[order.account].remove(_key);       
+        increaseOrderKeysAlive[address(0)].remove(_key);
+        delete increaseOrders[_key];
 
         _increasePosition(order.account, order.vault, order.collateralToken, order.indexToken, order.sizeDelta, order.isLong);
         // pay executor
         _transferOutETH(order.executionFee, _feeReceiver);
         emit ExecuteIncreaseOrder(order, currentPrice);
 
-        increaseOrderKeysAlive[order.account].remove(_key);       
-        increaseOrderKeysAlive[address(0)].remove(_key);
-        delete increaseOrders[_key];
+
         // delete increaseOrderKeys[msg.sender][order.index];
 
     }
 
 
-    function executeDecreaseOrder(bytes32 _key, address payable _feeReceiver) external onlyHandler {
+    function executeDecreaseOrder(bytes32 _key, address payable _feeReceiver) external onlyHandler nonReentrant{
         OrderData.DecreaseOrder memory order = decreaseOrders[_key];
         require(order.account != address(0), "no-order");
 
@@ -608,19 +609,16 @@ contract OrderBook is Ownable, Handler{
         } else {
             IERC20(order.collateralToken).safeTransfer(order.account, amountOut);
         }
-
-        // pay executor
-        _transferOutETH(order.executionFee, _feeReceiver);
-
-        emit ExecuteDecreaseOrder(order, currentPrice);
-
         decreaseOrderKeysAlive[order.account].remove(_key);       
         decreaseOrderKeysAlive[address(0)].remove(_key);
         delete decreaseOrders[_key];
-        // delete decreaseOrderKeys[msg.sender][order.index];
+
+        // pay executor
+        _transferOutETH(order.executionFee, _feeReceiver);
+        emit ExecuteDecreaseOrder(order, currentPrice);
     }
 
-    function executeSwapOrder(bytes32 _key, address payable _feeReceiver) external onlyHandler {
+    function executeSwapOrder(bytes32 _key, address payable _feeReceiver) external onlyHandler nonReentrant{
         OrderData.SwapOrder memory order = swapOrders[_key];
         require(order.account != address(0), "no-order");
 
@@ -642,14 +640,12 @@ contract OrderBook is Ownable, Handler{
             _amountOut = _swap(order.vault, order.path, order.minOut, order.account);
         }
 
-        // pay executor
-        _transferOutETH(order.executionFee, _feeReceiver);
-
-        emit ExecuteSwapOrder(order);
         swapOrderKeysAlive[order.account].remove(_key);       
         swapOrderKeysAlive[address(0)].remove(_key);
         delete swapOrders[_key];
-        // delete swapOrderKeys[msg.sender][order.index];
+
+        _transferOutETH(order.executionFee, _feeReceiver);
+        emit ExecuteSwapOrder(order);
     }
 
 
